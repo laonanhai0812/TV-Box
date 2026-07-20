@@ -96,7 +96,9 @@ jobs:
           chmod +x gradlew
           export ANDROID_HOME=$HOME/android-sdk
           export ANDROID_SDK_ROOT=$HOME/android-sdk
-          ./gradlew assembleRelease --no-daemon -x lint 2>&1 | tail -80
+          ./gradlew assembleRelease --no-daemon -x lint --stacktrace 2>&1
+          echo "=== 编译结束，查找 APK ==="
+          find . -name "*.apk" -type f
 
       - name: 签名 APK
         run: |
