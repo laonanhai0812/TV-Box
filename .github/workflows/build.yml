@@ -29,6 +29,8 @@ jobs:
       PKG: ${{ github.event.inputs.package_name }}
       VER: ${{ github.event.inputs.version_name }}
       CFG_URL: ${{ github.event.inputs.config_url }}
+      ANDROID_HOME: /home/runner/android-sdk
+      ANDROID_SDK_ROOT: /home/runner/android-sdk
 
     steps:
       - name: 拉取影视仓源码
@@ -41,36 +43,43 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 手动安装 Android SDK
+      - name: 安装 Android SDK
         run: |
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdtools.zip
-          mkdir -p $HOME/android-sdk/cmdline-tools
-          unzip -q cmdtools.zip -d $HOME/android-sdk/cmdline-tools
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
-          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
-          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
-          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          unzip -q cmdtools.zip -d $ANDROID_HOME/cmdline-tools
+          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: 修复构建配置
+        run: |
+          cd tvbox-src
+
+          # 创建 local.properties，告诉 Gradle SDK 路径
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "✅ local.properties 已创建"
+          cat local.properties
+
+          # 查看 app/build.gradle 内容，判断结构
+          echo "=== app/build.gradle ==="
+          cat app/build.gradle | head -30
 
       - name: 替换 App 名称和包名
         run: |
           cd tvbox-src
 
           OLD_PKG=$(grep "applicationId" app/build.gradle 2>/dev/null | head -1 | grep -oP '"[^"]+"' | tr -d '"' || echo "com.fongmi.android.tv")
-          echo "原始包名: $OLD_PKG"
-          echo "新包名: $PKG"
-          echo "App名称: $APP_NAME"
+          echo "原始包名: $OLD_PKG  →  新包名: $PKG"
 
-          # 替换 App 名称
           find . -name "strings.xml" -exec \
             sed -i "s|<string name=\"app_name\">[^<]*</string>|<string name=\"app_name\">${APP_NAME}</string>|g" {} +
 
-          # 替换包名
           find . -type f \( -name "*.kt" -o -name "*.java" \) \
             -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
           find . -name "AndroidManifest.xml" \
@@ -78,7 +87,6 @@ jobs:
           sed -i "s|applicationId \"${OLD_PKG}\"|applicationId \"${PKG}\"|g" app/build.gradle || true
           sed -i "s|versionName \"[^\"]*\"|versionName \"${VER}\"|g" app/build.gradle || true
 
-          # 写入默认配置地址
           CFG_FILE=$(find . -name "strings.xml" | head -1)
           if [ -n "$CFG_URL" ] && [ -n "$CFG_FILE" ]; then
             if grep -q 'name="default_config"' "$CFG_FILE"; then
@@ -87,32 +95,25 @@ jobs:
               sed -i "s|</resources>|    <string name=\"default_config\">${CFG_URL}</string>\n</resources>|" "$CFG_FILE"
             fi
           fi
-
           echo "✅ 替换完成"
 
       - name: 编译 APK
         run: |
           cd tvbox-src
           chmod +x gradlew
-          export ANDROID_HOME=$HOME/android-sdk
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-          ./gradlew assembleRelease --no-daemon -x lint --stacktrace 2>&1
-          echo "=== 编译结束，查找 APK ==="
+          ./gradlew assembleRelease --no-daemon -x lint 2>&1
+          echo "=== 查找生成的 APK ==="
           find . -name "*.apk" -type f
 
       - name: 签名 APK
         run: |
           cd tvbox-src
 
-          echo "=== 查找所有 APK ==="
-          find . -name "*.apk" -type f
-          echo "===================="
-
           APK=$(find . -name "*.apk" -type f | head -1)
-          echo "使用 APK: $APK"
+          echo "找到 APK: $APK"
 
           if [ -z "$APK" ]; then
-            echo "❌ 未找到 APK，编译可能未成功"
+            echo "❌ 未找到 APK"
             exit 1
           fi
 
@@ -125,7 +126,7 @@ jobs:
             -keypass android123 \
             -dname "CN=MyApp,O=MyOrg,C=CN" 2>/dev/null
 
-          BT=$HOME/android-sdk/build-tools/34.0.0
+          BT=$ANDROID_HOME/build-tools/35.0.0
           $BT/zipalign -v 4 "$APK" aligned.apk
           $BT/apksigner sign \
             --ks my-release-key.jks \
