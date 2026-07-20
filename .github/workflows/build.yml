@@ -24,6 +24,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      APP_NAME: ${{ github.event.inputs.app_name }}
+      PKG: ${{ github.event.inputs.package_name }}
+      VER: ${{ github.event.inputs.version_name }}
+      CFG_URL: ${{ github.event.inputs.config_url }}
+
     steps:
       - name: 拉取影视仓源码
         run: |
@@ -53,25 +59,75 @@ jobs:
 
       - name: 替换 App 名称和包名
         run: |
-          APP_NAME="${{ github.event.inputs.app_name }}"
-          PKG="${{ github.event.inputs.package_name }}"
-          VER="${{ github.event.inputs.version_name }}"
-          CFG_URL="${{ github.event.inputs.config_url }}"
           cd tvbox-src
 
           OLD_PKG=$(grep "applicationId" app/build.gradle 2>/dev/null | head -1 | grep -oP '"[^"]+"' | tr -d '"' || echo "com.fongmi.android.tv")
           echo "原始包名: $OLD_PKG"
+          echo "新包名: $PKG"
+          echo "App名称: $APP_NAME"
 
-          find . -name "strings.xml" | while read f; do
-            sed -i "s|<string name=\"app_name\">[^<]*</string>|<string name=\"app_name\">${APP_NAME}</string>|g" "$f"
-          done
+          # 替换 App 名称
+          find . -name "strings.xml" -exec \
+            sed -i "s|<string name=\"app_name\">[^<]*</string>|<string name=\"app_name\">${APP_NAME}</string>|g" {} +
 
-          find . -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
-          find . -name "AndroidManifest.xml" -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
-          sed -i "s|applicationId \"${OLD_PKG}\"|applicationId \"${PKG}\"|g" app/build.gradle 2>/dev/null || true
-          sed -i "s|versionName \"[^\"]*\"|versionName \"${VER}\"|g" app/build.gradle 2>/dev/null || true
+          # 替换包名
+          find . -type f \( -name "*.kt" -o -name "*.java" \) \
+            -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
+          find . -name "AndroidManifest.xml" \
+            -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
+          sed -i "s|applicationId \"${OLD_PKG}\"|applicationId \"${PKG}\"|g" app/build.gradle || true
+          sed -i "s|versionName \"[^\"]*\"|versionName \"${VER}\"|g" app/build.gradle || true
 
-          if [ -n "$CFG_URL" ]; then
-            CFG_FILE=$(find . -name "strings.xml" | head -1)
-            if grep -q 'name="default_config"' "$CFG_FILE" 2>/dev/null; then
-              sed -i
+          # 写入默认配置地址
+          CFG_FILE=$(find . -name "strings.xml" | head -1)
+          if [ -n "$CFG_URL" ] && [ -n "$CFG_FILE" ]; then
+            if grep -q 'name="default_config"' "$CFG_FILE"; then
+              sed -i "s|<string name=\"default_config\">[^<]*</string>|<string name=\"default_config\">${CFG_URL}</string>|g" "$CFG_FILE"
+            else
+              sed -i "s|</resources>|    <string name=\"default_config\">${CFG_URL}</string>\n</resources>|" "$CFG_FILE"
+            fi
+          fi
+
+          echo "✅ 替换完成"
+
+      - name: 编译 APK
+        run: |
+          cd tvbox-src
+          chmod +x gradlew
+          export ANDROID_HOME=$HOME/android-sdk
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          ./gradlew assembleRelease --no-daemon -x lint 2>&1 | tail -80
+
+      - name: 签名 APK
+        run: |
+          cd tvbox-src
+          keytool -genkeypair -v \
+            -keystore my-release-key.jks \
+            -keyalg RSA -keysize 2048 \
+            -validity 10000 \
+            -alias mykey \
+            -storepass android123 \
+            -keypass android123 \
+            -dname "CN=MyApp,O=MyOrg,C=CN" 2>/dev/null
+
+          APK=$(find . -name "*-release*.apk" | head -1)
+          echo "找到 APK: $APK"
+
+          BT=$HOME/android-sdk/build-tools/34.0.0
+          $BT/zipalign -v 4 "$APK" aligned.apk
+          $BT/apksigner sign \
+            --ks my-release-key.jks \
+            --ks-pass pass:android123 \
+            --key-pass pass:android123 \
+            --out "output_v${VER}.apk" \
+            aligned.apk
+
+          echo "✅ 签名完成"
+          ls -lh output_*.apk
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.app_name }}-v${{ github.event.inputs.version_name }}
+          path: tvbox-src/output_v${{ github.event.inputs.version_name }}.apk
+          retention-days: 30
