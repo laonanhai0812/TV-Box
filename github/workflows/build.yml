@@ -6,7 +6,7 @@ on:
       app_name:
         description: 'App 显示名称（中文/英文均可）'
         required: true
-        default: '我的影视仓'
+        default: '老男孩影视仓'
       package_name:
         description: '包名（如 com.myapp.tv，全小写字母+点）'
         required: true
