@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       app_name:
-        description: 'App 显示名称（中文/英文均可）'
+        description: 'App 显示名称'
         required: true
         default: '我的影视仓'
       package_name:
-        description: '包名（如 com.myapp.tv，全小写字母+点）'
+        description: '包名（com.xxx.xxx）'
         required: true
         default: 'com.myapp.tv'
       config_url:
@@ -16,7 +16,7 @@ on:
         required: false
         default: 'https://jihulab.com/z-blog/xh2/-/raw/main/t3.json'
       version_name:
-        description: '版本号（如 1.0.0）'
+        description: '版本号'
         required: false
         default: '1.0.0'
 
@@ -35,8 +35,21 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 配置 Android SDK
-        uses: android-actions/setup-android@v3
+      - name: 手动安装 Android SDK
+        run: |
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdtools.zip
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          unzip -q cmdtools.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
       - name: 替换 App 名称和包名
         run: |
@@ -46,11 +59,13 @@ jobs:
           CFG_URL="${{ github.event.inputs.config_url }}"
           cd tvbox-src
 
-          OLD_PKG=$(grep -r "applicationId" app/build.gradle 2>/dev/null | head -1 | grep -oP '"[^"]+"' | tr -d '"' || echo "com.fongmi.android.tv")
+          OLD_PKG=$(grep "applicationId" app/build.gradle 2>/dev/null | head -1 | grep -oP '"[^"]+"' | tr -d '"' || echo "com.fongmi.android.tv")
+          echo "原始包名: $OLD_PKG"
 
           find . -name "strings.xml" | while read f; do
             sed -i "s|<string name=\"app_name\">[^<]*</string>|<string name=\"app_name\">${APP_NAME}</string>|g" "$f"
           done
+
           find . -type f \( -name "*.kt" -o -name "*.java" \) -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
           find . -name "AndroidManifest.xml" -exec sed -i "s|${OLD_PKG}|${PKG}|g" {} +
           sed -i "s|applicationId \"${OLD_PKG}\"|applicationId \"${PKG}\"|g" app/build.gradle 2>/dev/null || true
@@ -59,43 +74,4 @@ jobs:
           if [ -n "$CFG_URL" ]; then
             CFG_FILE=$(find . -name "strings.xml" | head -1)
             if grep -q 'name="default_config"' "$CFG_FILE" 2>/dev/null; then
-              sed -i "s|<string name=\"default_config\">[^<]*</string>|<string name=\"default_config\">${CFG_URL}</string>|g" "$CFG_FILE"
-            else
-              sed -i "s|</resources>|    <string name=\"default_config\">${CFG_URL}</string>\n</resources>|" "$CFG_FILE"
-            fi
-          fi
-
-      - name: 编译 APK
-        run: |
-          cd tvbox-src
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon -x lint
-
-      - name: 签名 APK
-        run: |
-          cd tvbox-src
-          keytool -genkeypair -v \
-            -keystore my-release-key.jks \
-            -keyalg RSA -keysize 2048 \
-            -validity 10000 \
-            -alias mykey \
-            -storepass android123 \
-            -keypass android123 \
-            -dname "CN=MyApp, OU=Dev, O=MyOrg, L=CN, S=CN, C=CN"
-
-          APK=$(find . -name "*.apk" -path "*/release/*" | head -1)
-          BT=$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)
-          $BT/zipalign -v 4 "$APK" aligned.apk
-          $BT/apksigner sign \
-            --ks my-release-key.jks \
-            --ks-pass pass:android123 \
-            --key-pass pass:android123 \
-            --out "custom_${{ github.event.inputs.version_name }}.apk" \
-            aligned.apk
-
-      - name: 上传 APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.inputs.app_name }}-v${{ github.event.inputs.version_name }}
-          path: tvbox-src/custom_${{ github.event.inputs.version_name }}.apk
-          retention-days: 30
+              sed -i
