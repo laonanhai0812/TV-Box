@@ -101,6 +101,19 @@ jobs:
       - name: 签名 APK
         run: |
           cd tvbox-src
+
+          echo "=== 查找所有 APK ==="
+          find . -name "*.apk" -type f
+          echo "===================="
+
+          APK=$(find . -name "*.apk" -type f | head -1)
+          echo "使用 APK: $APK"
+
+          if [ -z "$APK" ]; then
+            echo "❌ 未找到 APK，编译可能未成功"
+            exit 1
+          fi
+
           keytool -genkeypair -v \
             -keystore my-release-key.jks \
             -keyalg RSA -keysize 2048 \
@@ -109,9 +122,6 @@ jobs:
             -storepass android123 \
             -keypass android123 \
             -dname "CN=MyApp,O=MyOrg,C=CN" 2>/dev/null
-
-          APK=$(find . -name "*-release*.apk" | head -1)
-          echo "找到 APK: $APK"
 
           BT=$HOME/android-sdk/build-tools/34.0.0
           $BT/zipalign -v 4 "$APK" aligned.apk
