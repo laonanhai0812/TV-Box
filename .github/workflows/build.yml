@@ -61,15 +61,12 @@ jobs:
         run: |
           cd tvbox-src
 
-          # 创建 local.properties，告诉 Gradle SDK 路径
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           echo "✅ local.properties 已创建"
-          cat local.properties
 
-          # 查看 app/build.gradle 内容，判断结构
-          echo "=== app/build.gradle ==="
-          cat app/build.gradle | head -30
-
+          echo "=== app/build.gradle 完整内容 ==="
+          cat app/build.gradle
+          
       - name: 替换 App 名称和包名
         run: |
           cd tvbox-src
